@@ -1,6 +1,6 @@
 {
   "name": "워크숍 버스 탑승 확인",
-  "description": "2026 교직원 워크숍 출발 및 귀가 버스 탑승 확인 및 실시간 현황 관리 웹앱",
+  "description": "2026 직업계고 AI 디지털도구 활용 수업 설계 역량강화 3차 연수",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
