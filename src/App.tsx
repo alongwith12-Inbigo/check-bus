@@ -412,7 +412,7 @@ export default function App() {
       {/* Header bar */}
       <div className="row page-head">
         <div>
-          <div className="muted">2026 직업계고 AI 디지털도구 활용 수업 설계 역량 강화 3차 연수</div>
+          <div className="muted">2026 직업계고 AI 디지털도구 활용 수업 설계 역량 강화 연수</div>
           <h1>워크숍 버스 탑승 확인</h1>
         </div>
         <button id="modeBtn" onClick={toggleMode}>
