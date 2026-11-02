@@ -762,3 +762,141 @@ export async function batchImportParticipants(
     handleFirestoreError(error, OperationType.WRITE, 'batchImportParticipants');
   }
 }
+
+// Master Admin: Add single participant
+export async function addParticipant(
+  data: { name: string; dept: string; bus: number },
+  role: AdminRole,
+  currentPeople: Person[]
+): Promise<Person> {
+  const name = data.name.trim();
+  const dept = (data.dept || '').trim() || '소속 미지정';
+  const bus = data.bus === 2 ? 2 : 1;
+
+  if (!name) {
+    throw new Error('이름을 입력해 주세요.');
+  }
+
+  // Generate clean sequential ID if existing IDs are numeric
+  const numericIds = currentPeople
+    .map((p) => Number(p.id))
+    .filter((n) => !isNaN(n) && n > 0);
+  const nextId = numericIds.length > 0 ? String(Math.max(...numericIds) + 1) : String(Date.now());
+
+  const newPerson: Person = {
+    id: nextId,
+    name,
+    dept,
+    out: bus,
+    back: bus
+  };
+
+  const batch = writeBatch(db);
+  batch.set(doc(db, 'people', newPerson.id), newPerson);
+
+  // Initialize record as '미탑승'
+  const now = new Date().toISOString();
+  const initialRecord: BoardingRecord = {
+    id: newPerson.id,
+    phase: '출발',
+    status: '미탑승',
+    at: now,
+    by: '명단 추가'
+  };
+  batch.set(doc(db, 'records', `${newPerson.id}_출발`), initialRecord);
+
+  const logId = 'add_' + Date.now();
+  const roleName = role === 'master' ? '총괄 관리자' : `${role}호차 관리자`;
+  batch.set(doc(db, 'logs', logId), {
+    id: logId,
+    timestamp: now,
+    role: roleName,
+    action: '명단추가',
+    targetId: newPerson.id,
+    detail: `신규 참가자 추가: ${name} (${dept}, ${bus}호차)`
+  });
+
+  try {
+    await batch.commit();
+    return newPerson;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, `people/${newPerson.id}`);
+    throw error;
+  }
+}
+
+// Master Admin: Update single participant
+export async function updateParticipant(
+  person: Person,
+  role: AdminRole
+): Promise<void> {
+  const id = String(person.id).trim();
+  const name = String(person.name).trim();
+  const dept = (person.dept || '').trim() || '소속 미지정';
+  const bus = person.out === 2 || person.back === 2 ? 2 : 1;
+
+  if (!id) throw new Error('참가자 ID가 유효하지 않습니다.');
+  if (!name) throw new Error('이름을 입력해 주세요.');
+
+  const updatedPerson: Person = {
+    id,
+    name,
+    dept,
+    out: bus,
+    back: bus
+  };
+
+  const batch = writeBatch(db);
+  batch.set(doc(db, 'people', id), updatedPerson);
+
+  const logId = 'edit_' + Date.now();
+  const roleName = role === 'master' ? '총괄 관리자' : `${role}호차 관리자`;
+  batch.set(doc(db, 'logs', logId), {
+    id: logId,
+    timestamp: new Date().toISOString(),
+    role: roleName,
+    action: '명단수정',
+    targetId: id,
+    detail: `참가자 정보 수정: ${name} (${dept}, ${bus}호차)`
+  });
+
+  try {
+    await batch.commit();
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, `people/${id}`);
+    throw error;
+  }
+}
+
+// Master Admin: Delete single participant
+export async function deleteParticipant(
+  personId: string,
+  personName: string,
+  role: AdminRole
+): Promise<void> {
+  const id = String(personId).trim();
+  if (!id) throw new Error('삭제할 참가자 ID가 없습니다.');
+
+  const batch = writeBatch(db);
+  batch.delete(doc(db, 'people', id));
+  batch.delete(doc(db, 'records', `${id}_출발`));
+  batch.delete(doc(db, 'records', `${id}_귀가`));
+
+  const logId = 'del_' + Date.now();
+  const roleName = role === 'master' ? '총괄 관리자' : `${role}호차 관리자`;
+  batch.set(doc(db, 'logs', logId), {
+    id: logId,
+    timestamp: new Date().toISOString(),
+    role: roleName,
+    action: '명단삭제',
+    targetId: id,
+    detail: `참가자 삭제: ${personName} (ID: ${id})`
+  });
+
+  try {
+    await batch.commit();
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, `people/${id}`);
+    throw error;
+  }
+}

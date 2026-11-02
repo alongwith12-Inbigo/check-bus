@@ -19,7 +19,10 @@ import {
   adminSetAllReset,
   adminCloseSession,
   adminPrepareNextBoarding,
-  maskName
+  maskName,
+  addParticipant,
+  updateParticipant,
+  deleteParticipant
 } from './lib/firestoreService';
 import {
   loginAdmin,
@@ -29,6 +32,8 @@ import {
 } from './lib/authService';
 import { CsvImportModal } from './components/CsvImportModal';
 import { AdminSettingsModal } from './components/AdminSettingsModal';
+import { ParticipantModal } from './components/ParticipantModal';
+import { DeleteConfirmModal } from './components/DeleteConfirmModal';
 
 type AppMode = 'self' | 'login' | 'admin';
 
@@ -73,6 +78,11 @@ export default function App() {
   // Modals (accessible for Master or discreetly)
   const [isCsvModalOpen, setIsCsvModalOpen] = useState(false);
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
+  const [isParticipantModalOpen, setIsParticipantModalOpen] = useState(false);
+  const [participantModalMode, setParticipantModalMode] = useState<'add' | 'edit'>('add');
+  const [selectedPersonForEdit, setSelectedPersonForEdit] = useState<Person | null>(null);
+  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+  const [selectedPersonForDelete, setSelectedPersonForDelete] = useState<Person | null>(null);
 
   // Admin login form
   const [loginRole, setLoginRole] = useState<AdminRole>('1');
@@ -376,6 +386,58 @@ export default function App() {
         next.delete(actionKey);
         return next;
       });
+    }
+  };
+
+  // Master Admin: Save (Add or Edit) Participant
+  const handleSaveParticipant = async (data: {
+    id?: string;
+    name: string;
+    dept: string;
+    bus: number;
+  }) => {
+    if (!adminSession || adminSession.role !== 'master') {
+      showMsg('총괄 관리자만 명단을 추가/수정할 수 있습니다.', true);
+      return;
+    }
+
+    try {
+      if (participantModalMode === 'add') {
+        const added = await addParticipant(data, adminSession.role, people);
+        showMsg(`✓ '${added.name}' 님이 ${data.bus}호차 명단에 추가되었습니다.`);
+      } else {
+        if (!data.id) throw new Error('수정할 대상 ID가 없습니다.');
+        await updateParticipant(
+          {
+            id: data.id,
+            name: data.name,
+            dept: data.dept,
+            out: data.bus,
+            back: data.bus
+          },
+          adminSession.role
+        );
+        showMsg(`✓ '${data.name}' 님의 정보가 수정되었습니다.`);
+      }
+    } catch (err: any) {
+      showMsg('저장 실패: ' + (err.message || String(err)), true);
+      throw err;
+    }
+  };
+
+  // Master Admin: Delete Participant
+  const handleDeleteParticipant = async (personId: string, personName: string) => {
+    if (!adminSession || adminSession.role !== 'master') {
+      showMsg('총괄 관리자만 명단을 삭제할 수 있습니다.', true);
+      return;
+    }
+
+    try {
+      await deleteParticipant(personId, personName, adminSession.role);
+      showMsg(`✓ '${personName}' 님이 명단에서 삭제되었습니다.`);
+    } catch (err: any) {
+      showMsg('삭제 실패: ' + (err.message || String(err)), true);
+      throw err;
     }
   };
 
@@ -763,9 +825,35 @@ export default function App() {
 
           {/* Roster List Card */}
           <div className="card" id="dashboardRoster">
-            <div className="row" style={{ marginBottom: '6px' }}>
-              <h2>탑승 명단</h2>
-              <span className="muted" style={{ fontSize: '12px' }}>총 {busRoster.length}명</span>
+            <div className="row" style={{ marginBottom: '8px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <h2>탑승 명단</h2>
+                <span className="muted" style={{ fontSize: '12px' }}>총 {busRoster.length}명</span>
+              </div>
+              {adminSession.role === 'master' && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedPersonForEdit(null);
+                    setParticipantModalMode('add');
+                    setIsParticipantModalOpen(true);
+                  }}
+                  style={{
+                    height: '30px',
+                    fontSize: '12px',
+                    fontWeight: 700,
+                    padding: '3px 11px',
+                    background: '#e6f7ef',
+                    color: '#155e3e',
+                    border: '1.5px solid #b8e8d2',
+                    borderRadius: '8px',
+                    boxShadow: '0 1px 3px rgba(184, 232, 210, 0.25)',
+                    cursor: 'pointer'
+                  }}
+                >
+                  + 참가자 추가
+                </button>
+              )}
             </div>
 
             <div id="adminList">
@@ -773,7 +861,11 @@ export default function App() {
                 <p className="muted" style={{ padding: '16px 0', textAlign: 'center' }}>
                   현재 {currentBus}호차에 배정된 참가자가 없습니다.
                   <br />
-                  {adminSession.role === 'master' && '하단 [명단 CSV 관리]에서 참가자 명단을 등록해 주세요.'}
+                  {adminSession.role === 'master' && (
+                    <span style={{ display: 'inline-block', marginTop: '6px' }}>
+                      상단 <strong>[+ 참가자 추가]</strong> 버튼 또는 하단 <strong>[명단 CSV 관리]</strong>에서 등록해 주세요.
+                    </span>
+                  )}
                 </p>
               ) : (
                 busRoster.map((p) => {
@@ -803,6 +895,58 @@ export default function App() {
                             {isBusy ? '…' : isBoarded ? '✓ 탑승' : isException ? p.status : '미탑승'}
                           </button>
 
+                          {adminSession.role === 'master' && (
+                            <>
+                              <button
+                                type="button"
+                                disabled={isBusy}
+                                onClick={() => {
+                                  setSelectedPersonForEdit(p);
+                                  setParticipantModalMode('edit');
+                                  setIsParticipantModalOpen(true);
+                                }}
+                                style={{
+                                  height: '28px',
+                                  fontSize: '11px',
+                                  fontWeight: 700,
+                                  padding: '2px 7px',
+                                  background: '#f6f4f0',
+                                  color: '#554e46',
+                                  border: '1px solid #ded8ce',
+                                  borderRadius: '7px',
+                                  cursor: 'pointer'
+                                }}
+                                aria-label={`${p.name} 정보 수정`}
+                                title="정보 수정"
+                              >
+                                수정
+                              </button>
+                              <button
+                                type="button"
+                                disabled={isBusy}
+                                onClick={() => {
+                                  setSelectedPersonForDelete(p);
+                                  setIsDeleteModalOpen(true);
+                                }}
+                                style={{
+                                  height: '28px',
+                                  fontSize: '11px',
+                                  fontWeight: 700,
+                                  padding: '2px 7px',
+                                  background: '#fde9ee',
+                                  color: '#8f2545',
+                                  border: '1px solid #f7c3cf',
+                                  borderRadius: '7px',
+                                  cursor: 'pointer'
+                                }}
+                                aria-label={`${p.name} 삭제`}
+                                title="명단 삭제"
+                              >
+                                삭제
+                              </button>
+                            </>
+                          )}
+
                           <button
                             type="button"
                             className="exception-toggle"
@@ -812,7 +956,7 @@ export default function App() {
                                 openExceptionMenuId === p.id ? null : p.id
                               )
                             }
-                            aria-label={`${p.name} 불참 및 개별이동`}
+                            aria-label={`${p.name} 추가 옵션`}
                           >
                             ⋯
                           </button>
@@ -840,6 +984,34 @@ export default function App() {
                           >
                             미탑승 복원
                           </button>
+
+                          {adminSession.role === 'master' && (
+                            <>
+                              <button
+                                type="button"
+                                style={{ background: '#f6f4f0', color: '#554e46', borderColor: '#ded8ce' }}
+                                onClick={() => {
+                                  setOpenExceptionMenuId(null);
+                                  setSelectedPersonForEdit(p);
+                                  setParticipantModalMode('edit');
+                                  setIsParticipantModalOpen(true);
+                                }}
+                              >
+                                ✏️ 정보 수정
+                              </button>
+                              <button
+                                type="button"
+                                style={{ background: '#fde9ee', color: '#8f2545', borderColor: '#f7c3cf' }}
+                                onClick={() => {
+                                  setOpenExceptionMenuId(null);
+                                  setSelectedPersonForDelete(p);
+                                  setIsDeleteModalOpen(true);
+                                }}
+                              >
+                                🗑️ 명단 삭제
+                              </button>
+                            </>
+                          )}
                         </div>
                       )}
                     </React.Fragment>
@@ -892,6 +1064,34 @@ export default function App() {
           role={adminSession.role}
           contacts={contacts}
           onSuccess={(msg) => showMsg(msg)}
+        />
+      )}
+
+      {/* ---------------- Master Admin: Participant Add / Edit Modal ---------------- */}
+      {isParticipantModalOpen && adminSession && (
+        <ParticipantModal
+          isOpen={isParticipantModalOpen}
+          mode={participantModalMode}
+          person={selectedPersonForEdit}
+          defaultBus={currentBus}
+          onClose={() => {
+            setIsParticipantModalOpen(false);
+            setSelectedPersonForEdit(null);
+          }}
+          onSave={handleSaveParticipant}
+        />
+      )}
+
+      {/* ---------------- Master Admin: Delete Confirmation Modal ---------------- */}
+      {isDeleteModalOpen && adminSession && (
+        <DeleteConfirmModal
+          isOpen={isDeleteModalOpen}
+          person={selectedPersonForDelete}
+          onClose={() => {
+            setIsDeleteModalOpen(false);
+            setSelectedPersonForDelete(null);
+          }}
+          onConfirm={handleDeleteParticipant}
         />
       )}
     </main>
